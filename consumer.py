@@ -1,57 +1,105 @@
 import json
 import sys
-from confluent_kafka import Consumer, KafkaError, KafkaException
+from pydantic import BaseModel, ValidationError
+from confluent_kafka import Consumer, Producer, KafkaError, KafkaException
 
-# Kafka Configuration
-conf = {
-    'bootstrap.servers': 'localhost:9092',
-    'group.id': 'fraud_detection_squad',  # The Consumer Group ID
-    'auto.offset.reset': 'earliest',      # Where to start reading if no previous offset exists
-    'enable.auto.commit': True            # Automatically save our place in the stream
-}
+# --- 1. PYDANTIC: The Bouncer ---
+class Transaction(BaseModel):
+    transaction_id: str
+    user_id: str
+    amount: float
+    merchant: str
+    location: str
+    timestamp: str
 
-# Initialize the Consumer
-consumer = Consumer(conf)
-topic = 'raw_transactions'
+# --- 2. THE BUSINESS LOGIC ---
+def is_fraud(transaction: Transaction) -> bool:
+    return transaction.amount > 1000.00
 
-# Subscribe to the topic
-consumer.subscribe([topic])
+# --- 3. THE EMBEDDED SCHEMA: The Blueprint ---
+def format_for_jdbc(transaction_dict: dict) -> dict:
+    return {
+        "schema": {
+            "type": "struct",
+            "fields": [
+                {"type": "string", "optional": False, "field": "transaction_id"},
+                {"type": "string", "optional": True, "field": "user_id"},
+                {"type": "double", "optional": True, "field": "amount"},
+                {"type": "string", "optional": True, "field": "merchant"},
+                {"type": "string", "optional": True, "field": "location"},
+                {"type": "string", "optional": True, "field": "timestamp"}
+            ],
+            "optional": False,
+            "name": "fraud_record"
+        },
+        "payload": transaction_dict
+    }
 
-print("Consumer activated. Listening for transactions... Press Ctrl+C to stop.")
+# --- KAFKA CONFIGURATION ---
+conf = {'bootstrap.servers': 'localhost:9092'}
+
+consumer_conf = conf.copy()
+consumer_conf.update({
+    'group.id': 'enterprise_fraud_squad',
+    'auto.offset.reset': 'earliest',
+    'enable.auto.commit': True 
+})
+
+consumer = Consumer(consumer_conf)
+producer = Producer(conf)
+
+inbound_topic = 'raw_transactions'
+outbound_topic = 'fraud_alerts_topic'
+
+consumer.subscribe([inbound_topic])
+
+print("🛡️ Enterprise Decoupled Consumer activated. Scanning stream...")
 
 try:
     while True:
-        # 1. The Pull Model: Ask Kafka for a message, wait up to 1.0 second.
         msg = consumer.poll(timeout=1.0)
-
-        # 2. Handle empty responses (no new data right now)
-        if msg is None:
-            continue
-
-        # 3. Handle Kafka Errors
+        if msg is None: continue
         if msg.error():
-            if msg.error().code() == KafkaError._PARTITION_EOF:
-                # End of partition event (not a real error, just reached the end of current data)
-                continue
-            elif msg.error():
-                raise KafkaException(msg.error())
+            if msg.error().code() == KafkaError._PARTITION_EOF: continue
+            else: raise KafkaException(msg.error())
 
-        # 4. Process the Message
-        # Kafka messages are bytes. We must decode them back to strings, then parse the JSON.
         try:
-            raw_value = msg.value().decode('utf-8')
-            transaction = json.loads(raw_value)
+            # Step A: Parse raw bytes to JSON
+            raw_data = json.loads(msg.value().decode('utf-8'))
             
-            print(f"Received Transaction: {transaction['user_id']} spent ${transaction['amount']} at {transaction['merchant']}")
+            # Step B: Pass data through the Pydantic Bouncer
+            valid_transaction = Transaction(**raw_data)
             
+            # Step C: Evaluate Business Logic
+            if is_fraud(valid_transaction):
+                print(f"🚨 FRAUD CAUGHT: User {valid_transaction.user_id} | ${valid_transaction.amount}")
+                
+                # Step D: Convert Pydantic object to dictionary, then embed the Schema
+                connect_payload = format_for_jdbc(valid_transaction.model_dump())
+                
+                # Step E: Produce to the Outbound Topic for Kafka Connect to pick up
+                producer.produce(
+                    topic=outbound_topic,
+                    key=valid_transaction.transaction_id.encode('utf-8'),
+                    value=json.dumps(connect_payload).encode('utf-8')
+                )
+                producer.poll(0)
+                print(f"   └── 📨 Routed clean data to outbound topic.")
+            else:
+                print(f"✅ Clean: User {valid_transaction.user_id} | ${valid_transaction.amount}")
+
+        # --- THE SAFETY NETS ---
+        except ValidationError as e:
+            print(f"❌ PYDANTIC REJECTION: Corrupt data format.\n{e}")
+            # (Day 6 target: Route this to a Dead Letter Queue)
         except json.JSONDecodeError:
-            print(f"Corrupt data received: {msg.value()}")
+            print("⚠️ FATAL: Payload is not valid JSON.")
+        except Exception as e:
+            print(f"⚠️ System Error: {e}")
 
 except KeyboardInterrupt:
-    print("\nShutting down consumer gracefully...")
+    print("\nShutting down gracefully...")
 finally:
-    # Data King Rule: Always close the consumer cleanly. 
-    # This tells Kafka "I am leaving" so it can reassign my partitions to another consumer if needed,
-    # and it commits the final offsets to disk.
     consumer.close()
-    print("Consumer closed.")
+    producer.flush() 
+    print("Clean shutdown.")
