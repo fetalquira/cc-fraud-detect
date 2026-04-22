@@ -40,11 +40,11 @@ creation_payload = {
     "config": core_config
 }
 
-# Status checking
-status_url = "http://localhost:8083/connectors/postgres-enterprise-sink/status"
 
-# Checking config
-config_url = "http://localhost:8083/connectors/postgres-enterprise-sink/config"
+# Generic PUT url for Kafka Connect
+# Possible options so far: pause, status, config
+put_command = 'status'
+generic_url = f"http://localhost:8083/connectors/postgres-enterprise-sink/{put_command}"
 
 def kafka_options(url, data=core_config, headers=headers, options='get'):
     if options=='get':
@@ -76,4 +76,4 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
 
 # Kafka Connect via REST API
 if __name__ == "__main__":
-    kafka_options(status_url, options='get')
+    kafka_options(generic_url, options='get', data=None)
