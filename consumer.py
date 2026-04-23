@@ -90,10 +90,25 @@ try:
 
         # --- THE SAFETY NETS ---
         except ValidationError as e:
-            print(f"❌ PYDANTIC REJECTION: Corrupt data format.\n{e}")
-            # (Day 6 target: Route this to a Dead Letter Queue)
+            print(f"❌ PYDANTIC REJECTION: Corrupt data caught. Routing to DLQ...")
+            
+            # The Forensic Package: We save the exact error AND the original bad data
+            dlq_payload = {
+                "failure_reason": str(e),
+                "original_payload": raw_data
+            }
+            
+            producer.produce(
+                topic='dlq_application_errors',
+                # If there's no transaction_id because it's corrupt, we use a fallback key
+                key=raw_data.get('transaction_id', 'UNKNOWN_KEY').encode('utf-8'),
+                value=json.dumps(dlq_payload).encode('utf-8')
+            )
+            producer.poll(0)
+            print(f"   └── 🚑 Poison pill safely quarantined in 'dlq_application_errors'")
+            
         except json.JSONDecodeError:
-            print("⚠️ FATAL: Payload is not valid JSON.")
+            print("⚠️ FATAL: Payload is not valid JSON. (In production, route this to DLQ too!)")
         except Exception as e:
             print(f"⚠️ System Error: {e}")
 

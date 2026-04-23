@@ -30,8 +30,10 @@ core_config = {
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "key.converter.schemas.enable": "false",
     
-    # 2. Skip Poison Pills: If a message fails to parse, log it, drop it, and move to the next one!
+    # --- 2. THE INFRASTRUCTURE DLQ ---
     "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "dlq_database_errors",
+    "errors.deadletterqueue.context.headers.enable": "true",
     "errors.log.enable": "true",
     "errors.log.include.messages": "true"
 }
@@ -43,7 +45,7 @@ creation_payload = {
 
 # Generic PUT url for Kafka Connect
 # Possible options so far: pause, status, config
-put_command = 'status'
+put_command = 'resume'
 generic_url = f"http://localhost:8083/connectors/postgres-enterprise-sink/{put_command}"
 
 def kafka_options(url, data=core_config, headers=headers, options='get'):
@@ -62,6 +64,7 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
                 json=creation_payload
             )
             print(response.status_code)
+            print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
     elif options=='put':
@@ -76,4 +79,4 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
 
 # Kafka Connect via REST API
 if __name__ == "__main__":
-    kafka_options(generic_url, options='get', data=None)
+    kafka_options(url=url, options='post')
