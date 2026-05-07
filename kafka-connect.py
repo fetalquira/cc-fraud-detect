@@ -3,17 +3,26 @@ import os
 import json
 
 
+# URL & Header
 url = 'http://localhost:8083/connectors'
 headers = {
     "Content-Type": "application/json"
 }
+
+# DB Credentials
 db_url = f"jdbc:postgresql://postgres:5432/{os.getenv("DB_NAME")}"
 db_user = os.getenv("DB_USER")
 db_password = os.getenv("DB_PASSWORD")
+
+# Configuration
+topics = 'raw_transactions'
+table_name = 'raw_transactions'
+dlq_topic = 'dlq_database_errors'
+SINK_NAME = 'postgres-enterprise-sink'
 core_config = {
     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
     "tasks.max": "1",
-    "topics": "fraud_alerts_topic",
+    "topics": topics,
     "connection.url": db_url,
     "connection.user": db_user,
     "connection.password": db_password,
@@ -22,9 +31,7 @@ core_config = {
     "pk.fields": "transaction_id",
     "auto.create": "true",
     "auto.evolve": "true",
-    "table.name.format": "enterprise_fraud_alerts",
-    
-    # --- THE FIXES ---
+    "table.name.format": table_name,
     
     # 1. Override the Key Converter: Tell Kafka Connect the key is just a raw string, not JSON.
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
@@ -32,7 +39,7 @@ core_config = {
     
     # --- 2. THE INFRASTRUCTURE DLQ ---
     "errors.tolerance": "all",
-    "errors.deadletterqueue.topic.name": "dlq_database_errors",
+    "errors.deadletterqueue.topic.name": dlq_topic,
     "errors.deadletterqueue.context.headers.enable": "true",
     "errors.log.enable": "true",
     "errors.log.include.messages": "true"
@@ -42,11 +49,11 @@ creation_payload = {
     "config": core_config
 }
 
-
 # Generic PUT url for Kafka Connect
 # Possible options so far: pause, status, config
-put_command = 'resume'
-generic_url = f"http://localhost:8083/connectors/postgres-enterprise-sink/{put_command}"
+put_command = 'status'
+sink_name = 'postgres-fraud-sink'
+generic_url = f"http://localhost:8083/connectors/{sink_name}/{put_command}"
 
 def kafka_options(url, data=core_config, headers=headers, options='get'):
     if options=='get':
@@ -79,4 +86,4 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
 
 # Kafka Connect via REST API
 if __name__ == "__main__":
-    kafka_options(url=url, options='post')
+    kafka_options(url=generic_url, options='get')
