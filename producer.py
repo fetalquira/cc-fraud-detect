@@ -1,4 +1,5 @@
 import uuid
+import json
 import time
 from datetime import datetime, timezone
 from faker import Faker
@@ -17,6 +18,7 @@ fake = Faker()
 # ==========================================
 class Transaction(BaseModel):
     transaction_id: str
+    credit_card_num: str
     user_id: str
     amount: float
     merchant: str
@@ -61,7 +63,8 @@ def generate_transaction():
     """Generates synthetic data."""
     return {
         "transaction_id": str(uuid.uuid4()),
-        "user_id": f"U-{fake.random_int(min=1000, max=1050)}",
+        "credit_card_num": str(fake.credit_card_number()),
+        "user_id": f"U-{fake.random_int(min=1000, max=9999)}",
         "amount": round(fake.random.uniform(5.0, 1000.0), 2),
         "merchant": fake.company(),
         "location": fake.city(),
@@ -90,8 +93,25 @@ try:
             producer.poll(0) 
             
         except ValidationError as e:
-            print(f"❌ PYDANTIC REJECTION: {e}")
-            # In a full run, we would route this to our DLQ here.
+            # --- THE DLQ UPGRADE ---
+            error_payload = {
+                "raw_payload": raw_data,
+                "error_details": e.errors(), # Pydantic gives us a clean list of errors
+                "rejected_at": time.time()
+            }
+            
+            print(f"⚠️  ROUTING TO DLQ: {raw_data.get('transaction_id', 'unknown')}")
+            
+            # We send this as raw JSON because if it failed Pydantic, 
+            # it might not fit our strict Avro schema anyway.
+            # Use a basic Producer or a separate topic for raw triage.
+            producer.produce(
+                topic='validation_errors',
+                key=raw_data.get('transaction_id', str(uuid.uuid4())),
+                value=json.dumps(error_payload).encode('utf-8'), # Raw bytes
+                on_delivery=delivery_report
+            )
+            producer.poll(0)
             
         time.sleep(1) # Throttle to 1 message per second for visual monitoring
 

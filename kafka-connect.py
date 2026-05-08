@@ -1,10 +1,11 @@
 import requests
+from yarl import URL
 import os
 import json
 
 
 # URL & Header
-url = 'http://localhost:8083/connectors'
+base = URL('http://localhost:8083/connectors')
 headers = {
     "Content-Type": "application/json"
 }
@@ -14,11 +15,13 @@ db_url = f"jdbc:postgresql://postgres:5432/{os.getenv("DB_NAME")}"
 db_user = os.getenv("DB_USER")
 db_password = os.getenv("DB_PASSWORD")
 
-# Configuration
+# Config Variables
 topics = 'raw_transactions'
 table_name = 'raw_transactions'
 dlq_topic = 'dlq_database_errors'
 SINK_NAME = 'postgres-enterprise-sink'
+
+# THE CONFIGURATION
 core_config = {
     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
     "tasks.max": "1",
@@ -44,21 +47,18 @@ core_config = {
     "errors.log.enable": "true",
     "errors.log.include.messages": "true"
 }
+
+# Creation Payload for POST
 creation_payload = {
-    "name": "postgres-enterprise-sink",
+    "name": SINK_NAME,
     "config": core_config
 }
 
-# Generic PUT url for Kafka Connect
-# Possible options so far: pause, status, config
-put_command = 'status'
-sink_name = 'postgres-fraud-sink'
-generic_url = f"http://localhost:8083/connectors/{sink_name}/{put_command}"
-
-def kafka_options(url, data=core_config, headers=headers, options='get'):
+# Possible commands: POST, PUT (pause), DELETE, GET (status)
+def kafka_options(url = base, sink_name = SINK_NAME, config = core_config, headers = headers, options = 'get'):
     if options=='get':
         try:
-            response = requests.get(url=url)
+            response = requests.get(url = url / sink_name / "status")
             status = response.json()
             print(json.dumps(status, indent=2))
         except Exception as e:
@@ -68,7 +68,7 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
             response = requests.post(
                 url=url,
                 headers=headers,
-                json=creation_payload
+                json=config # Make sure to use creation_payload instead of core_config on default
             )
             print(response.status_code)
             print(response.text)
@@ -77,13 +77,23 @@ def kafka_options(url, data=core_config, headers=headers, options='get'):
     elif options=='put':
         try:
             response = requests.put(
-                url=url,
-                json=data
+                url=url / sink_name / "config",
+                json=config
             )
             print(response.status_code)
+            print(response.text)
+        except Exception as e:
+            print(f"Failed: {e}")
+    elif options=='delete':
+        try:
+            response = requests.delete(
+                url = url / sink_name
+            )
+            print(response.status_code)
+            print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
 
 # Kafka Connect via REST API
 if __name__ == "__main__":
-    kafka_options(url=generic_url, options='get')
+    kafka_options()

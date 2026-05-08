@@ -11,4 +11,5 @@ dependencies = [
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.3",
     "requests>=2.33.1",
+    "yarl>=1.23.0",
 ]
