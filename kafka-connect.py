@@ -2,6 +2,7 @@ import requests
 from yarl import URL
 import os
 import json
+import argparse
 
 
 # URL & Header
@@ -43,6 +44,7 @@ core_config = {
     # --- 2. THE INFRASTRUCTURE DLQ ---
     "errors.tolerance": "all",
     "errors.deadletterqueue.topic.name": dlq_topic,
+    "errors.deadletterqueue.topic.replication.factor": "1",
     "errors.deadletterqueue.context.headers.enable": "true",
     "errors.log.enable": "true",
     "errors.log.include.messages": "true"
@@ -55,39 +57,51 @@ creation_payload = {
 }
 
 # Possible commands: POST, PUT (pause), DELETE, GET (status)
-def kafka_options(url = base, sink_name = SINK_NAME, config = core_config, headers = headers, options = 'get'):
-    if options=='get':
+def kafka_options():
+    parser = argparse.ArgumentParser()
+    
+    # Add all the default variables
+    parser.add_argument("--url", default=base)
+    parser.add_argument("--sink_name", default=SINK_NAME)
+    parser.add_argument("--config", default=core_config)
+    parser.add_argument("--creation_payload", default=creation_payload)
+    parser.add_argument("--headers", default=headers)
+    parser.add_argument("--options", default='get')
+
+    args = parser.parse_args()
+
+    if args.options=='get':
         try:
-            response = requests.get(url = url / sink_name / "status")
+            response = requests.get(url = args.url / args.sink_name / "status")
             status = response.json()
             print(json.dumps(status, indent=2))
         except Exception as e:
             print(f"Failed to get status: {e}")
-    elif options=='post':
+    elif args.options=='post':
         try:
             response = requests.post(
-                url=url,
-                headers=headers,
-                json=config # Make sure to use creation_payload instead of core_config on default
+                url = args.url,
+                headers = args.headers,
+                json = args.creation_payload # Make sure to use creation_payload instead of core_config on default
             )
             print(response.status_code)
             print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
-    elif options=='put':
+    elif args.options=='put':
         try:
             response = requests.put(
-                url=url / sink_name / "config",
-                json=config
+                url = args.url / args.sink_name / "config",
+                json = args.config
             )
             print(response.status_code)
             print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
-    elif options=='delete':
+    elif args.options == 'delete':
         try:
             response = requests.delete(
-                url = url / sink_name
+                url = args.url / args.sink_name
             )
             print(response.status_code)
             print(response.text)
