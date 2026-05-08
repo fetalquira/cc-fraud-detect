@@ -1,0 +1,14 @@
+{
+  "namespace": "enterprise.fraud",
+  "type": "record",
+  "name": "Transaction",
+  "fields": [
+    {"name": "transaction_id", "type": "string"},
+    {"name": "credit_card_num", "type": "string"},
+    {"name": "user_id", "type": "string"},
+    {"name": "amount", "type": "double"},
+    {"name": "merchant", "type": "string"},
+    {"name": "location", "type": "string"},
+    {"name": "timestamp", "type": "string"}
+  ]
+}
