@@ -7,6 +7,8 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - data-network
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
@@ -28,6 +30,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - data-network
 
   postgres:
     image: postgres:15
@@ -40,6 +44,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data-network
 
   kafka-init:
     image: confluentinc/cp-kafka:7.4.0
@@ -55,6 +61,8 @@ services:
         kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 1 --replication-factor 1 --topic raw_transactions
         echo -e "Topics created successfully!"
       '
+    networks:
+      - data-network
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.4.0
@@ -68,6 +76,8 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'PLAINTEXT://kafka:29092'
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - data-network
 
   kafka-connect:
     image: confluentinc/cp-kafka-connect:7.4.0
@@ -104,6 +114,43 @@ services:
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
     volumes:
       - ./kafka-connect-jdbc:/usr/share/confluent-hub-components/kafka-connect-jdbc
+    networks:
+      - data-network
+
+  spark-master:
+    image: apache/spark:3.4.1
+    container_name: spark-master
+    # We use the specific entrypoint script designed for containers
+    entrypoint: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+      - SPARK_MASTER_HOST=spark-master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+      - data-network
+
+  spark-worker:
+    image: apache/spark:3.4.1
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    # We point the worker to the master's internal network address
+    entrypoint: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_WORKER_WEBUI_PORT=8081
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8082:8081"
+    networks:
+      - data-network
 
 volumes:
   postgres_data:
+
+networks:
+  data-network:
+    driver: bridge
