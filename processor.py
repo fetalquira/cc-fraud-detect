@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_avro, col, expr, current_timestamp
+from pyspark.sql.functions import col, expr, current_timestamp
+from pyspark.sql.avro.functions import from_avro
 from pyspark.sql.column import Column
 
 # 1. Initialize the Session
@@ -35,19 +36,29 @@ json_schema = """
 """
 
 # 4. Transform: Binary -> Structured -> Insights
-# We convert the binary 'value' column into a struct using the Avro schema
-decoded_df = raw_df.select(
-    from_avro(col("value"), json_schema).alias("data")
-).select("data.*")
+# We add an option to handle parsing safely. We use 'PERMISSIVE' inside a 
+# specialized structure so we can capture the corrupt data instead of crashing.
+avro_options = {"mode": "PERMISSIVE", "columnNameOfCorruptRecord": "corrupt_data"}
 
-# 5. The Fraud Logic
-# We add a 'is_fraud' flag and a processing timestamp
-final_df = decoded_df.withColumn("is_fraud", col("amount") > 10000) \
-                     .withColumn("processed_at", current_timestamp())
+# TRICK: If your producer uses Confluent Avro, it prepends 5 magic bytes.
+# We slice off the first 5 bytes using expr("substring(value, 6)") to get the pure Avro record.
+# If your producer sends raw Avro WITHOUT Confluent, change col("pure_bytes") back to col("value").
+decoded_df = raw_df.withColumn("pure_bytes", expr("substring(value, 6)")) \
+    .select(from_avro(col("pure_bytes"), json_schema, avro_options).alias("data")) \
+    .select("data.*")
 
-# 6. Write the Result back to Kafka
-# This 'clean_transactions' topic will be picked up by our Postgres Sink
-query = final_df.selectExpr("CAST(transaction_id AS STRING) AS key", "to_json(struct(*)) AS value") \
+# 5. The Enterprise Error Routing Logic
+# If a row is corrupt, Spark's permissive engine will fail to unpack it, 
+# resulting in critical schema fields like transaction_id becoming null.
+clean_df = decoded_df.filter(col("transaction_id").isNotNull()) \
+    .withColumn("is_fraud", col("amount") > 10000) \
+    .withColumn("processed_at", current_timestamp())
+
+# OPTIONAL DLQ SINK: You can capture bad rows here to route to a dead-letter topic
+bad_df = decoded_df.filter(col("transaction_id").isNull())
+
+# 6. Write the Result back to Kafka (Clean Channel)
+query = clean_df.selectExpr("CAST(transaction_id AS STRING) AS key", "to_json(struct(*)) AS value") \
     .writeStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "kafka:29092") \

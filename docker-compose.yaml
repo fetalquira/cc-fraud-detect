@@ -131,6 +131,8 @@ services:
       - "7077:7077"
     networks:
       - data-network
+    volumes:
+    - .:/opt/spark-apps
 
   spark-worker:
     image: apache/spark:3.4.1
@@ -147,6 +149,8 @@ services:
       - "8082:8081"
     networks:
       - data-network
+    volumes:
+    - .:/opt/spark-apps
 
 volumes:
   postgres_data:
