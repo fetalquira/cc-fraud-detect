@@ -2,6 +2,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, expr, current_timestamp
 from pyspark.sql.avro.functions import from_avro
 from pyspark.sql.column import Column
+import json
 
 # 1. Initialize the Session
 # We need the Spark-Sql-Kafka and Spark-Avro packages to talk to our stack
@@ -57,14 +58,51 @@ clean_df = decoded_df.filter(col("transaction_id").isNotNull()) \
 # OPTIONAL DLQ SINK: You can capture bad rows here to route to a dead-letter topic
 bad_df = decoded_df.filter(col("transaction_id").isNull())
 
-# 6. Write the Result back to Kafka (Clean Channel)
-query = clean_df.selectExpr("CAST(transaction_id AS STRING) AS key", "to_json(struct(*)) AS value") \
+# Define the exact blueprint Kafka Connect needs to auto-create the table
+connect_schema = {
+    "type": "struct",
+    "name": "record",
+    "optional": False,
+    "fields": [
+        {"type": "string", "optional": True, "field": "transaction_id"},
+        {"type": "string", "optional": True, "field": "card_id"},
+        {"type": "double", "optional": True, "field": "amount"},
+        {"type": "string", "optional": True, "field": "vendor_id"},
+        {"type": "string", "optional": True, "field": "transaction_time"},
+        {"type": "boolean", "optional": True, "field": "is_fraud"},
+        {"type": "string", "optional": True, "field": "processed_at"}
+    ]
+}
+schema_str = json.dumps(connect_schema)
+
+# Cast the timestamp to a string so it aligns cleanly with the JSON schema
+clean_df = clean_df.withColumn("processed_at", col("processed_at").cast("string"))
+
+# 6A. Write the Clean Stream to production
+query_clean = clean_df.selectExpr(
+    "CAST(transaction_id AS STRING) AS key",
+    f"concat('{{\"schema\": {schema_str}, \"payload\": ', to_json(struct(*)), '}}') AS value"
+) \
     .writeStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "kafka:29092") \
     .option("topic", "clean_transactions") \
-    .option("checkpointLocation", "/tmp/spark_checkpoints") \
+    .option("checkpointLocation", "/tmp/spark_checkpoints/clean") \
     .outputMode("append") \
     .start()
 
-query.awaitTermination()
+# 6B. Write the Bad Stream to the DLQ
+# Even if transaction_id is null (key becomes null), Kafka accepts it and routes it safely.
+query_dlq = bad_df.selectExpr("CAST(transaction_id AS STRING) AS key", "to_json(struct(*)) AS value") \
+    .writeStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka:29092") \
+    .option("topic", "dlq_processing_errors") \
+    .option("checkpointLocation", "/tmp/spark_checkpoints/dlq") \
+    .outputMode("append") \
+    .start()
+
+# 7. The Master Loop
+# Because we have two active streams, we don't wait on one specific query.
+# We tell the Spark Session to wait for ANY active stream to terminate.
+spark.streams.awaitAnyTermination()
