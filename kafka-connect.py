@@ -17,8 +17,8 @@ db_user = os.getenv("DB_USER")
 db_password = os.getenv("DB_PASSWORD")
 
 # Config Variables
-topics = 'raw_transactions'
-table_name = 'raw_transactions'
+topics = 'clean_transactions'
+table_name = 'processed_transactions'
 dlq_topic = 'dlq_database_errors'
 SINK_NAME = 'postgres-enterprise-sink'
 
@@ -36,7 +36,11 @@ core_config = {
     "auto.create": "true",
     "auto.evolve": "true",
     "table.name.format": table_name,
-    
+
+    # 1. Add the JSON Value Converter Overrides
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "true",
+
     # 1. Override the Key Converter: Tell Kafka Connect the key is just a raw string, not JSON.
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "key.converter.schemas.enable": "false",
