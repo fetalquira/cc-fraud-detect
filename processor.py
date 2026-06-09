@@ -28,10 +28,12 @@ json_schema = """
   "name": "Transaction",
   "fields": [
     {"name": "transaction_id", "type": "string"},
-    {"name": "card_id", "type": "string"},
+    {"name": "credit_card_num", "type": "string"},
+    {"name": "user_id", "type": "string"},
     {"name": "amount", "type": "double"},
-    {"name": "vendor_id", "type": "string"},
-    {"name": "transaction_time", "type": "string"}
+    {"name": "merchant", "type": "string"},
+    {"name": "location", "type": "string"},
+    {"name": "timestamp", "type": "string"}
   ]
 }
 """
@@ -64,11 +66,12 @@ connect_schema = {
     "name": "record",
     "optional": False,
     "fields": [
-        {"type": "string", "optional": True, "field": "transaction_id"},
-        {"type": "string", "optional": True, "field": "card_id"},
-        {"type": "double", "optional": True, "field": "amount"},
-        {"type": "string", "optional": True, "field": "vendor_id"},
-        {"type": "string", "optional": True, "field": "transaction_time"},
+        {"type": "string", "optional": False, "field": "transaction_id"},
+        {"type": "string", "optional": False, "field": "credit_card_num"},
+        {"type": "string", "optional": False, "field": "user_id"},
+        {"type": "double", "optional": False, "field": "amount"},
+        {"type": "string", "optional": False, "field": "merchant"},
+        {"type": "string", "optional": True, "field": "timestamp"},
         {"type": "boolean", "optional": True, "field": "is_fraud"},
         {"type": "string", "optional": True, "field": "processed_at"}
     ]
