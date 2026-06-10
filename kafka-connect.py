@@ -89,7 +89,6 @@ def kafka_options():
                 json = args.creation_payload # Make sure to use creation_payload instead of core_config on default
             )
             print(response.status_code)
-            print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
     elif args.options=='put':
@@ -99,7 +98,6 @@ def kafka_options():
                 json = args.config
             )
             print(response.status_code)
-            print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
     elif args.options == 'delete':
@@ -108,7 +106,6 @@ def kafka_options():
                 url = args.url / args.sink_name
             )
             print(response.status_code)
-            print(response.text)
         except Exception as e:
             print(f"Failed: {e}")
 
