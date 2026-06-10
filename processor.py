@@ -2,7 +2,24 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, expr, current_timestamp
 from pyspark.sql.avro.functions import from_avro
 from pyspark.sql.column import Column
+import urllib.request
 import json
+
+# We use the Docker network alias because Spark is INSIDE the container network
+registry_url = "http://schema-registry:8081/subjects/raw_transactions-value/versions/latest"
+
+try:
+    # Use Python's built-in urllib instead of the external 'requests' library
+    with urllib.request.urlopen(registry_url) as response:
+        if response.status == 200:
+            # Read the bytes, decode to string, and parse the JSON
+            data = json.loads(response.read().decode('utf-8'))
+            json_schema = data['schema']
+            print("Schema successfully loaded dynamically from Confluent Registry.")
+        else:
+            raise Exception(f"Failed to fetch schema. HTTP Status: {response.status}")
+except Exception as e:
+    raise Exception(f"Fatal error connecting to Schema Registry: {e}")
 
 # 1. Initialize the Session
 # We need the Spark-Sql-Kafka and Spark-Avro packages to talk to our stack
@@ -18,25 +35,6 @@ raw_df = spark.readStream \
     .option("subscribe", "raw_transactions") \
     .option("startingOffsets", "earliest") \
     .load()
-
-# 3. Handle the Schema (The "Successor's" Secret)
-# In production, we'd fetch the schema from the registry. 
-# For now, we define the schema string to match your transaction_schema.avsc
-json_schema = """
-{
-  "type": "record",
-  "name": "Transaction",
-  "fields": [
-    {"name": "transaction_id", "type": "string"},
-    {"name": "credit_card_num", "type": "string"},
-    {"name": "user_id", "type": "string"},
-    {"name": "amount", "type": "double"},
-    {"name": "merchant", "type": "string"},
-    {"name": "location", "type": "string"},
-    {"name": "timestamp", "type": "string"}
-  ]
-}
-"""
 
 # 4. Transform: Binary -> Structured -> Insights
 # We add an option to handle parsing safely. We use 'PERMISSIVE' inside a 
@@ -61,21 +59,31 @@ clean_df = decoded_df.filter(col("transaction_id").isNotNull()) \
 bad_df = decoded_df.filter(col("transaction_id").isNull())
 
 # Define the exact blueprint Kafka Connect needs to auto-create the table
+connect_fields = []
+
+# Parse the flat string we got from the registry into a real Python dictionary
+schema_dict = json.loads(json_schema)
+
+# Translate Avro format {"name": "x", "type": "y"} to Connect format {"field": "x", "type": "y"}
+for field in schema_dict["fields"]:
+    connect_fields.append({
+        "type": field["type"],
+        "optional": True,
+        "field": field["name"]
+    })
+
+# Inject the Evolved Fields created by Spark
+connect_fields.append({"type": "boolean", "optional": True, "field": "is_fraud"})
+connect_fields.append({"type": "string", "optional": True, "field": "processed_at"})
+
+# Construct the final Kafka Connect Envelope Blueprint
 connect_schema = {
     "type": "struct",
     "name": "record",
     "optional": False,
-    "fields": [
-        {"type": "string", "optional": False, "field": "transaction_id"},
-        {"type": "string", "optional": False, "field": "credit_card_num"},
-        {"type": "string", "optional": False, "field": "user_id"},
-        {"type": "double", "optional": False, "field": "amount"},
-        {"type": "string", "optional": False, "field": "merchant"},
-        {"type": "string", "optional": True, "field": "timestamp"},
-        {"type": "boolean", "optional": True, "field": "is_fraud"},
-        {"type": "string", "optional": True, "field": "processed_at"}
-    ]
+    "fields": connect_fields
 }
+
 schema_str = json.dumps(connect_schema)
 
 # Cast the timestamp to a string so it aligns cleanly with the JSON schema
